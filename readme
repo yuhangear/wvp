@@ -129,7 +129,7 @@ java -jar wvp-pro-2.6.9-071316*.jar
 #在外面运行
 docker exec  hk_wvp bash /root/start.sh
 #如果已经有了镜像，以下直接运行镜像
-docker run  -p 50300-50350:50300-50350/tcp -p 50300-50350:50300-50350/udp --name hk_video wvp_hk bash /root/start.sh 
+docker run  -d -p 50300-50350:50300-50350/tcp -p 50300-50350:50300-50350/udp --name hk_video wvp_hk bash /root/start.sh 
 
 
 
