@@ -1,0 +1,118 @@
+# #1.安装docker
+# curl -fsSL https://test.docker.com -o test-docker.sh
+# sudo bash test-docker.sh
+
+# #2.建立mysql镜像
+
+# docker pull mysql 
+# docker run -it  -p 50302:50302 --name  hk_mysql -e MYSQL_ROOT_PASSWORD=jkloli -d mysql  #-e MYSQL_ROOT_HOST=% 
+# docker run  -p 50302:50302 --name  hk_mysql -e MYSQL_ROOT_PASSWORD=jkloli -d mysql 
+
+# ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'jkloli';
+# GRANT ALL ON *.* TO 'root'@'%';
+# # grant all privileges on . to 'root'@'%' ;
+# flush privileges;
+
+# docker cp ./ini_sql.sql hk_mysql:/root/ 
+# #进入sql
+# docker exec -it hk_mysql mysql -u root -p
+
+# CREATE DATABASE wvp; 
+# USE wvp; 
+# SOURCE /root/ini_sql.sql; 
+
+# # 进入mysql方法：
+
+# docker cp ./my.cnf  ce7da2325039:/etc/
+# docker cp ./ini_sql.sql hk_wvp:/root/ 
+
+# #建立redis镜像
+# docker pull redis 
+# docker run --name hk_redis -d -p 50301:50301 redis redis-server --port 50301  --requirepass 123456 --protected-mode no 
+# docker start
+
+
+#安装mysql
+apt-get install mysql-server 
+sudo apt install mysql-client 
+sudo apt install libmysqlclient-dev 
+
+修改mysql密码 
+
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'jkloli'; 
+flush privileges;
+
+docker cp ./ini_sql.sql wvp:/root/ 
+
+CREATE DATABASE wvp; 
+USE wvp; 
+SOURCE /root/ini_sql.sql; 
+
+vim /etc/mysql/mysql.conf.d/mysqld.cnf #修改port和端口绑定
+
+docker cp ./mysqld.cnf hk_wvp:/etc/mysql/mysql.conf.d/mysqld.cnf
+#安装redis
+apt install redis-server 
+#
+1.找到bind 127.0.0.1 ,把它进行注释
+2.找到protected-mode yes 把它改成no。
+#
+docker cp ./redis.conf hk_wvp:/etc/redis/redis.conf 
+
+
+#建立流服务器，wvp镜像
+docker pull ubuntu:20.04 
+docker run -it -p 50303-50320:50303-50320/tcp -p 50303-50320:50303-50320/udp --name hk_wvp ubuntu:20.04 
+
+docker cp ./wvp-GB28181-pro hk_wvp:/root/
+docker cp ./node-v18.16.1-linux-x64 hk_wvp:/root/
+docker cp ./ZLMediaKit hk_wvp:/root/
+
+#进入镜像系统
+docker exec -it hk_wvp /bin/bash 
+apt install software-properties-common 
+apt-get update 
+add-apt-repository ppa:openjdk-r/ppa 
+apt-get install -y cmake g++  openjdk-11-jre git maven ffmpeg  openssl libssl-dev  libsctp-dev
+#编译流媒体服务器
+
+cd ZLMediaKit
+git submodule update --init  
+mkdir build 
+cd build 
+cmake .. 
+make -j2
+
+#编译 wvp
+cd node-v18.16.1-linux-x64/bin/
+dir=`pwd`
+ln -s $dir/npm /usr/bin/
+ln -s $dir/node /usr/bin/
+cd ../..
+cd wvp-GB28181-pro/web_src/ 
+npm --registry=https://registry.npmmirror.com install 
+npm run build -j2 
+cd ..
+mvn package 
+mvn package -P war
+
+#设置配置文件
+docker cp ./application.yml  2e7455f3995d:/root/wvp-GB28181-pro/target/
+docker cp ./config.ini  2e7455f3995d:/root/ZLMediaKit/release/linux/Debug
+
+#运行
+cd /root/ZLMediaKit/release/linux/Debug 
+./MediaServer
+cd /root/wvp-GB28181-pro/target
+java -jar wvp-pro-2.6.9-071316*.jar
+
+
+
+
+
+
+
+
+
+
+
