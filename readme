@@ -113,6 +113,7 @@ docker cp ./application.yml  955a876ca0c2:/root/wvp-GB28181-pro/target/
 docker cp ./config.ini  955a876ca0c2:/root/ZLMediaKit/release/linux/Debug
 docker cp ./mysqld.cnf hk_wvp:/etc/mysql/mysql.conf.d/mysqld.cnf
 docker cp ./redis.conf hk_wvp:/etc/redis/redis.conf 
+docker cp ./start.sh  hk_wvp:/root/
 
 #运行
 #
