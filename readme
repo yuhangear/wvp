@@ -108,7 +108,7 @@ mvn package
 mvn package -P war
 
 #设置配置文件，注意复制配置文件到docker之后，需要修改配置文件的访问权限，否者程序会忽视配置文件
-#redis和mysql ip需要设置为 127.0.0.1
+#redis和mysql ip需要设置为 127.0.0.1 ; ZLM 端口数量最少35个
 docker cp ./application.yml  955a876ca0c2:/root/wvp-GB28181-pro/target/
 docker cp ./config.ini  955a876ca0c2:/root/ZLMediaKit/release/linux/Debug
 docker cp ./mysqld.cnf hk_wvp:/etc/mysql/mysql.conf.d/mysqld.cnf
