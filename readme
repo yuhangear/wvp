@@ -101,7 +101,8 @@ ln -s $dir/npm /usr/bin/
 ln -s $dir/node /usr/bin/
 cd ../..
 cd wvp-GB28181-pro/web_src/ 
-npm --registry=https://registry.npmmirror.com install 
+npm --registry=http://registry.npm.taobao.org/ update
+npm --registry=http://registry.npm.taobao.org/ install 
 npm run build -j1
 cd ..
 mvn package 
