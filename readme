@@ -67,7 +67,7 @@ ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'jkloli';
 flush privileges;
 
 docker cp ./ini_sql.sql hk_wvp:/root/
-
+#DROP DATABASE wvp;
 CREATE DATABASE wvp; 
 USE wvp; 
 SOURCE /root/ini_sql.sql; 
