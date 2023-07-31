@@ -3,13 +3,15 @@ package com.genersoft.iot.vmp.vmanager.gb28181.device;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
-
+import com.genersoft.iot.vmp.common.StreamInfo;
 import com.genersoft.iot.vmp.conf.DynamicTask;
 import com.genersoft.iot.vmp.conf.MediaConfig;
 import com.genersoft.iot.vmp.conf.SipConfig;
+import com.genersoft.iot.vmp.conf.UserSetting;
 import com.genersoft.iot.vmp.conf.exception.ControllerException;
 import com.genersoft.iot.vmp.gb28181.bean.Device;
 import com.genersoft.iot.vmp.gb28181.bean.DeviceChannel;
+import com.genersoft.iot.vmp.gb28181.bean.RecordInfo;
 import com.genersoft.iot.vmp.gb28181.bean.SyncStatus;
 import com.genersoft.iot.vmp.gb28181.task.ISubscribeTask;
 import com.genersoft.iot.vmp.gb28181.task.impl.CatalogSubscribeTask;
@@ -20,11 +22,16 @@ import com.genersoft.iot.vmp.gb28181.transmit.cmd.impl.SIPCommander;
 import com.genersoft.iot.vmp.service.IDeviceChannelService;
 import com.genersoft.iot.vmp.service.IDeviceService;
 import com.genersoft.iot.vmp.service.IInviteStreamService;
+import com.genersoft.iot.vmp.service.IPlayService;
+import com.genersoft.iot.vmp.service.bean.InviteErrorCode;
 import com.genersoft.iot.vmp.storager.IRedisCatchStorage;
 import com.genersoft.iot.vmp.storager.IVideoManagerStorage;
+import com.genersoft.iot.vmp.utils.DateUtil;
 import com.genersoft.iot.vmp.vmanager.bean.BaseTree;
 import com.genersoft.iot.vmp.vmanager.bean.ErrorCode;
+import com.genersoft.iot.vmp.vmanager.bean.StreamContent;
 import com.genersoft.iot.vmp.vmanager.bean.WVPResult;
+import com.genersoft.iot.vmp.vmanager.gb28181.record.GBRecordController;
 import com.genersoft.iot.vmp.web.gb28181.dto.DeviceChannelExtend;
 import com.github.pagehelper.PageInfo;
 import com.mysql.cj.xdevapi.JsonArray;
@@ -55,6 +62,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.text.ParseException;
 import java.util.*;
+import java.util.concurrent.ExecutionException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -67,20 +75,33 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 
-
+import javax.servlet.http.HttpServletRequest;
 
 @Controller
 @ResponseBody
 public class DeviceQuery_my {
 	
+	private final static Logger logger = LoggerFactory.getLogger(GBRecordController.class);
+	@Autowired
+	private IPlayService playService;
 
-
+	@Autowired
+	private SIPCommander cmder;
 
 	@Autowired
 	private IVideoManagerStorage storager;
 
 	@Autowired
     private MediaConfig mediaConfig;
+
+	@Autowired
+	private UserSetting userSetting;
+
+	@Autowired
+	private DeferredResultHolder resultHolder;
+
+
+
 
 
 
@@ -167,6 +188,265 @@ public class DeviceQuery_my {
 
 
 
+
+	@Operation(summary = "录像记录")
+	@ResponseBody
+	@GetMapping("/api/device/query/history")
+	@Parameter(name = "deviceId", description = "设备id", required = true)
+	@Parameter(name = "start_date", description = "start_date", required = true)
+	@Parameter(name = "end_date", description = "end_date", required = true)
+
+	public List<JSONObject> get_video_history(String deviceId, String start_date , String end_date) throws JsonProcessingException {
+
+	// public DeferredResult<WVPResult<RecordInfo>> get_video_history(String deviceId, String start_date , String end_date) {
+
+
+	//http://192.168.31.228:50303/api/playback/start/3402000000320000003/34020000001320000001?startTime=2023-07-30%2002:23:35&endTime=2023-07-30%2002:23:39
+	// var xhr = new XMLHttpRequest(); 
+	// xhr.open('GET', '/api/device/query/history?deviceId=3402000000320000003&start_date=2023-07-30%2002:23:35&end_date=2023-07-30%2012:23:39'); 
+	// xhr.onload = function() { 
+	//   if (xhr.status === 200) { 
+	//    var data = JSON.parse(xhr.responseText); 
+	//   // var data = xhr.responseText
+	//   console.log(data);
+	
+	//   } 
+	// }; 
+	// xhr.send(); 
+	
+		DeviceChannel target_dev = storager.queryChannelsByDeviceId(deviceId, null, null, null, null, 1, Integer.MAX_VALUE).getList().get(0);
+		//deviceId
+		String channelId = target_dev.getChannelId();
+		String startTime = start_date;
+		String endTime = end_date;
+
+
+
+
+		if (logger.isDebugEnabled()) {
+			logger.debug(String.format("录像信息查询 API调用，deviceId：%s ，startTime：%s， endTime：%s",deviceId, startTime, endTime));
+		}
+		DeferredResult<WVPResult<RecordInfo>> result = new DeferredResult<>();
+		if (!DateUtil.verification(startTime, DateUtil.formatter)){
+			throw new ControllerException(ErrorCode.ERROR100.getCode(), "startTime格式为" + DateUtil.PATTERN);
+		}
+		if (!DateUtil.verification(endTime, DateUtil.formatter)){
+			throw new ControllerException(ErrorCode.ERROR100.getCode(), "endTime格式为" + DateUtil.PATTERN);
+		}
+
+		Device device = storager.queryVideoDevice(deviceId);
+		// 指定超时时间 1分钟30秒
+		String uuid = UUID.randomUUID().toString();
+		int sn  =  (int)((Math.random()*9+1)*100000);
+		String key = DeferredResultHolder.CALLBACK_CMD_RECORDINFO + deviceId + sn;
+		RequestMessage msg = new RequestMessage();
+		msg.setId(uuid);
+		msg.setKey(key);
+		try {
+			cmder.recordInfoQuery(device, channelId, startTime, endTime, sn, null, null, null, (eventResult -> {
+				WVPResult<RecordInfo> wvpResult = new WVPResult<>();
+				wvpResult.setCode(ErrorCode.ERROR100.getCode());
+				wvpResult.setMsg("查询录像失败, status: " +  eventResult.statusCode + ", message: " + eventResult.msg);
+				msg.setData(wvpResult);
+				resultHolder.invokeResult(msg);
+			}));
+		} catch (InvalidArgumentException | SipException | ParseException e) {
+			logger.error("[命令发送失败] 查询录像: {}", e.getMessage());
+			throw new ControllerException(ErrorCode.ERROR100.getCode(), "命令发送失败: " +  e.getMessage());
+		}
+
+		// 录像查询以channelId作为deviceId查询
+		resultHolder.put(key, uuid, result);
+
+
+		result.onTimeout(()->{
+			msg.setData("timeout");
+			WVPResult<RecordInfo> wvpResult = new WVPResult<>();
+			wvpResult.setCode(ErrorCode.ERROR100.getCode());
+			wvpResult.setMsg("timeout");
+			msg.setData(wvpResult);
+			resultHolder.invokeResult(msg);
+		});
+
+
+		// // 创建 ObjectMapper 对象
+		// ObjectMapper objectMapper = new ObjectMapper();
+		// // 将 DeferredResult 对象转换为 JSON 字符串
+		// String jsonString;
+
+		// result.onCompletion(() -> {
+
+		// 	Object finalResult = result.getResult();
+		// 	Object final_result2 = result.getResult();
+		// 	// try {
+		// 	// 	jsonString = objectMapper.writeValueAsString(finalResult);
+		// 	// } catch (JsonProcessingException e) {
+		// 	// 	// TODO Auto-generated catch block
+		// 	// 	e.printStackTrace();
+		// 	// }
+		// 	// JSONObject jsonObject = JSONObject.parseObject(jsonString);
+
+		// });
+
+
+
+
+		List<JSONObject> dev_list = new ArrayList<>();
+
+
+
+		Object temp = result.getResult();
+
+
+
+		// 创建 ObjectMapper 对象
+		ObjectMapper objectMapper = new ObjectMapper();
+		// 将 DeferredResult 对象转换为 JSON 字符串
+		while(result.getResult() == null) {
+			// 等待结果...
+		}
+		String jsonString = objectMapper.writeValueAsString(result.getResult());
+		JSONObject jsonObject = JSONObject.parseObject(jsonString);
+		
+		String recordListStr = jsonObject.getString("recordList");
+		JSONArray recordList = JSON.parseArray(recordListStr);
+
+
+		for (int i = 0; i < recordList.size(); i++) {
+			JSONObject record = recordList.getJSONObject(i);
+			// String deviceId = record.getString("deviceId");
+			String name = record.getString("name");
+			String filePath = record.getString("filePath");
+			String fileSize = record.getString("fileSize");
+			long bytes = Long.parseLong(fileSize);
+			double megabytes = (double) bytes / (1024 * 1024);
+			String fileSizeInMB = String.format("%.2f MB", megabytes);
+
+			String address = record.getString("address");
+			// String startTime = record.getString("startTime");
+			// String endTime = record.getString("endTime");
+			int secrecy = record.getIntValue("secrecy");
+			String type = record.getString("type");
+
+			String name_ = device.getName();
+			JSONObject jsonObject1 = new JSONObject();
+			jsonObject1.put("name",name_);
+			jsonObject1.put("channelId",channelId);
+			jsonObject1.put("deviceId",deviceId);
+			jsonObject1.put("start_time",record.getString("startTime"));
+			jsonObject1.put("end_time",record.getString("endTime"));
+			jsonObject1.put("fileSize",fileSizeInMB);
+			dev_list.add(jsonObject1);
+			// 在这里对获取到的值进行处理
+			// ...
+		}
+
+
+		return dev_list;
+
+		
+
+	}
+
+
+
+
+
+	// @Operation(summary = "history_url")
+	// @ResponseBody
+	// @GetMapping("/api/device/query/history_url")
+	// @Parameter(name = "deviceId", description = "设备id", required = true)
+	// @Parameter(name = "channelId", description = "通道id", required = true)
+	// @Parameter(name = "start_time", description = "start_time", required = true)
+	// @Parameter(name = "end_time", description = "end_time", required = true)
+	// public JSONObject get_history_url(HttpServletRequest request,String deviceId, String channelId ,String start_time , String end_time ) throws JsonProcessingException {
+
+	// 	String startTime=start_time;
+	// 	String endTime=end_time;
+
+	// 	if (!DateUtil.verification(startTime, DateUtil.formatter)){
+	// 		throw new ControllerException(ErrorCode.ERROR100.getCode(), "startTime格式为" + DateUtil.PATTERN);
+	// 	}
+	// 	if (!DateUtil.verification(endTime, DateUtil.formatter)){
+	// 		throw new ControllerException(ErrorCode.ERROR100.getCode(), "endTime格式为" + DateUtil.PATTERN);
+	// 	}
+
+
+	// 	if (logger.isDebugEnabled()) {
+	// 		logger.debug(String.format("设备回放 API调用，deviceId：%s ，channelId：%s", deviceId, channelId));
+	// 	}
+
+	// 	String uuid = UUID.randomUUID().toString();
+	// 	String key = DeferredResultHolder.CALLBACK_CMD_PLAYBACK + deviceId + channelId;
+	// 	DeferredResult<WVPResult<StreamContent>> result = new DeferredResult<>(userSetting.getPlayTimeout().longValue());
+	// 	resultHolder.put(key, uuid, result);
+
+	// 	RequestMessage requestMessage = new RequestMessage();
+	// 	requestMessage.setKey(key);
+	// 	requestMessage.setId(uuid);
+
+	// 	playService.playBack(deviceId, channelId, startTime, endTime,
+	// 			(code, msg, data)->{
+
+	// 				WVPResult<StreamContent> wvpResult = new WVPResult<>();
+	// 				if (code == InviteErrorCode.SUCCESS.getCode()) {
+	// 					wvpResult.setCode(ErrorCode.SUCCESS.getCode());
+	// 					wvpResult.setMsg(ErrorCode.SUCCESS.getMsg());
+
+	// 					if (data != null) {
+	// 						StreamInfo streamInfo = (StreamInfo)data;
+	// 						if (userSetting.getUseSourceIpAsStreamIp()) {
+	// 							streamInfo.channgeStreamIp(request.getLocalAddr());
+	// 						}
+	// 						wvpResult.setData(new StreamContent(streamInfo));
+	// 					}
+	// 				}else {
+	// 					wvpResult.setCode(code);
+	// 					wvpResult.setMsg(msg);
+	// 				}
+	// 				requestMessage.setData(wvpResult);
+	// 				resultHolder.invokeResult(requestMessage);
+	// 			});
+
+	// 	while(result.getResult() == null) {
+	// 		// 等待结果...
+	// 	}
+
+
+	// 	ObjectMapper objectMapper = new ObjectMapper();
+	// 	String jsonString = objectMapper.writeValueAsString(result.getResult());
+	// 	JSONObject jsonObject = JSONObject.parseObject(jsonString);
+		
+	// 	String recordListStr = jsonObject.getString("data");
+	// 	JSONArray recordList = JSON.parseArray(recordListStr);
+
+
+	// 	JSONObject jsonObject_ = new JSONObject();
+
+	// 	String ip_add = mediaConfig.getIp();
+	// 	String port = String.valueOf(mediaConfig.getHttpPort());
+	// 	String port_ssl = String.valueOf(mediaConfig.getHttpSSlPort());
+			
+	// 	///rtp/3402000000320000003_34020000001320000001.live.flv
+
+	// 	//ws://123.57.67.33:50306/rtp/3402000000320000003_34020000001320000001.live.flv
+	// 	String add_http = ":"+port+"/rtp/" + deviceId+"_"+channelId +".live.flv";
+	// 	// String add_https = "wss://"+ip_add+":"+port_ssl+"/rtp/" + deviceId+"_"+channelId +".live.flv";
+
+
+	// 	jsonObject_.put("ws",add_http);
+
+	// 	return jsonObject_;
+
+			
+
+	// }
+
+
+
+
+
+}
 
 
 	// /**
@@ -291,4 +571,3 @@ public class DeviceQuery_my {
 
 
 
-}
